@@ -1,0 +1,54 @@
+- type: filestream
+  id: gitlab-shell-log
+  enabled: false
+  paths:
+    - /var/log/gitlab/gitlab-shell/gitlab-shell.log
+
+  parsers:
+    - ndjson:
+        target: ""
+        message_key: message
+  json:
+    keys_under_root: true
+
+  processors:
+    - decode_json_fields:
+        fields: ["message"]
+    - add_fields:
+        target: '@metadata'
+        fields:
+          log_source: "gitlab-shell-log"
+    - drop_event:
+        when:
+          and:
+          - not.equals:
+              command: "git-upload-pack"
+          - not.equals:
+              command: "git-receive-pack"
+    - move_fields:
+        from: ""
+        fields: ["gl_repository","gl_key_id","git_protocol","gl_project_path","gl_key_type","remote_ip","msg","username","command","user_id","time"]
+        to: "track."
+        ignore_missing: true
+    - rename:
+        fields:
+          - from: "track.gl_repository"
+            to: "track.repository"
+          - from: "track.gl_key_id"
+            to: "track.user_key_id"
+          - from: "track.gl_project_path"
+            to: "track.project_path"
+          - from: "track.gl_key_type"
+            to: "track.user_key_type"
+          - from: "track.time"
+            to: "track.action_time"
+        ignore_missing: true
+        fail_on_error: false
+    - drop_fields:
+        fields: ["correlation_id","level"]
+    - add_fields:
+        target: 'track'
+        fields:
+          log_source: "gitlab-shell"
+    - add_tags:
+        tags: [gitlab]

@@ -1,0 +1,65 @@
+- type: filestream
+  id: gitaly-log
+  enabled: false
+  paths:
+    - /var/log/gitlab/gitaly/current
+
+  parsers:
+    - ndjson:
+        target: ""
+        message_key: message
+  json:
+    keys_under_root: true
+
+  processors:
+    - decode_json_fields:
+        fields: ["message"]
+    - add_fields:
+        target: '@metadata'
+        fields:
+          log_source: "gitaly-log"
+    - drop_event:
+        when:
+          or:
+          - not.has_fields: ['remote_ip','username']
+          - equals:
+              remote_ip: ["192.168.1.2", "192.168.1.3"]
+    - move_fields:
+        from: ""
+        fields: ["grpc.request.glProjectPath","remote_ip","username","grpc.code","grpc.request.glRepository",
+                 "msg","peer.address","grpc.method","grpc.meta.client_name","grpc.service","time"]
+        to: "track."
+        ignore_missing: true
+    - rename:
+        fields:
+          - from: "track.grpc.request.glProjectPath"
+            to: "track.project_path"
+          - from: "track.grpc.code"
+            to: "track.status_code"
+          - from: "track.grpc.request.glRepository"
+            to: "track.repository"
+          - from: "track.peer.address"
+            to: "track.peer_address"
+          - from: "track.grpc.method"
+            to: "track.command"
+          - from: "track.grpc.meta.client_name"
+            to: "track.client_name"
+          - from: "track.grpc.service"
+            to: "track.service"
+          - from: "track.time"
+            to: "track.action_time"
+        ignore_missing: true
+        fail_on_error: false
+    - drop_fields:
+        fields: ['graphql','/^db_(.*)$/','/^redis_(.*)$/','/^mem_/','/^duration_/','/^cpu_/','log','agent','/.*\_duration\_.*/','pid','/^grpc\.(.*)$/','/^command\.(.*)$/','track.grpc',"track.peer","system","span.kind","level","correlation_id"]
+    - drop_event:
+        when:
+          equals:
+            "track.client_name": "gitlab-sidekiq"
+    - add_fields:
+        target: 'track'
+        fields:
+          log_source: "gitaly"
+    - add_tags:
+        tags: [gitlab]
+

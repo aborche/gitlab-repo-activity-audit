@@ -1,0 +1,79 @@
+- type: filestream
+  id: api_json-log
+  enabled: true
+  paths:
+    - /var/log/gitlab/gitlab-rails/api_json.log
+
+  exclude_lines: ['allowed']
+  parsers:
+    - ndjson:
+        target: ""
+        message_key: message
+
+  json:
+    keys_under_root: true
+
+  processors:
+    - decode_json_fields:
+        fields: ["message"]
+    - drop_fields:
+        fields: ['graphql','/^db_(.*)$/','/^redis_(.*)$/','/^mem_/','/^duration_/','/^cpu_/','log','agent','/.*\_duration\_.*/','pid']
+    - drop_event:
+        when:
+          or:
+          - equals:
+              "meta.remote_ip": "192.168.1.2"
+          - equals:
+              "meta.remote_ip": "192.168.1.3"
+          - and:
+            - not.equals:
+                "meta.caller_id": "POST /api/:version/internal/post_receive"
+            - not.equals:
+                "meta.caller_id": "POST /api/:version/projects/:id/merge_requests/:merge_request_iid/approve"
+    - add_fields:
+        target: '@metadata'
+        fields:
+          log_source: "api_json-log"
+    - add_fields:
+        target: 'track'
+        fields:
+          log_source: "api_json"
+          repository: ""
+          msg: ""
+    - script:
+        lang: javascript
+        #file: ./remap.js
+        source: >
+          function process(event) {
+            var data = event.Get('params');
+            event.Rename('params','old_params')
+            for (var field in data) {
+              event.Put("params."+data[field].key, data[field].value)
+            }
+            event.Delete('old_params')
+          }
+    - move_fields:
+        from: ""
+        fields: ["meta.project","remote_ip","action","time","params","user_id","ua","controller","path","meta.user"]
+        to: "track."
+        ignore_missing: true
+    - copy_fields:
+        fields:
+          - from: "track.path"
+            to: "track.command"
+          - from: "track.meta.user"
+            to: "track.username"
+            fail_on_error: false
+            ignore_missing: true
+    - rename:
+        fields:
+          - from: "track.meta.project"
+            to: "track.project_path"
+          - from: "track.time"
+            to: "track.action_time"
+    - drop_fields:
+        fields: ['method','status','correlation_id',"meta.root_namespace","meta.client_id","request_urgency","format",
+          "meta.feature_category","meta.user","meta.caller_id","meta.remote_ip","track.meta"]
+        ignore_missing: true
+    - add_tags:
+        tags: [gitlab]
