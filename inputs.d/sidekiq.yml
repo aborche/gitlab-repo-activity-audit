@@ -1,0 +1,86 @@
+- type: filestream
+  id: sidekiq-log
+  enabled: true
+  paths:
+    - /var/log/gitlab/sidekiq/current
+
+  parsers:
+    - ndjson:
+        target: ""
+        add_error_key: true
+        message_key: "message"
+
+  json:
+    keys_under_root: true
+
+  processors:
+    - add_fields:
+        target: '@metadata'
+        fields:
+          log_source: "sidekiq-log"
+    - drop_event:
+        when:
+          or:
+          - not.has_fields: ['meta.remote_ip']
+          - not.contains:
+              "class": "ProcessCommitWorker"
+    - drop_fields:
+        fields: ['graphql','/^db_(.*)$/','/^redis_(.*)$/','/^mem_/','/^duration_/','/^cpu_/']
+        ignore_missing: true
+    - script:
+        lang: javascript
+        #file: ./remap.js
+        source: >
+          function process(event) {
+            var data = event.Get('args');
+            event.Rename('args','old_args')
+            var dictkeys = ['project_id', 'user_id', 'commit_hash', 'default']
+            for (var field in data) {
+              var dt = data[field].replace(new RegExp('=>', 'g'),':')
+              event.Put("params."+dictkeys[field], data[field])
+            }
+            event.Delete('old_args')
+          }
+    - move_fields:
+        from: ""
+        fields: ["meta.project","meta.remote_ip","meta.user","message","time","params","user_id","ua","controller","path","queue"]
+        to: "track."
+        ignore_missing: true
+    - move_fields:
+        from: ""
+        fields: ["class"]
+        to: "track."
+        ignore_missing: true
+    - move_fields:
+        from: ""
+        fields: ["job_status"]
+        to: "track.params."
+        ignore_missing: true
+    - rename:
+        fields:
+          - from: "track.meta.project"
+            to: "track.project_path"
+          - from: "track.meta.user"
+            to: "track.username"
+          - from: "track.time"
+            to: "track.action_time"
+          - from: "track.class"
+            to: "track.service"
+          - from: "track.queue"
+            to: "track.command"
+          - from: "track.message"
+            to: "track.msg"
+          - from: "track.meta.remote_ip"
+            to: "track.remote_ip"
+    - drop_fields:
+        fields: ['graphql','/^db_(.*)$/','/^redis_(.*)$/','/^mem_/','/^duration_/','/^cpu_/','log','agent','/.*\_duration\_.*/',
+          'pid','method','status','correlation_id',"meta.root_namespace","meta.client_id","request_urgency","format",
+          "meta.feature_category","meta.user","meta.caller_id","meta.remote_ip","track.meta","load_balancing_strategy","job_size_bytes","jid","idempotency_key",
+          "completed_at","correlation_id","created_at","enqueued_at","retry",'/^rugged_/',"size_limiter","scheduling_latency_s","worker_data_consistency","version"]
+        ignore_missing: true
+    - add_fields:
+        target: 'track'
+        fields:
+          log_source: "sidekiq"
+    - add_tags:
+        tags: [gitlab]
